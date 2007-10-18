@@ -6,6 +6,8 @@
 #include <lualib.h>
 #include <lauxlib.h>
 
+#include "cstr.h"
+
 #define log_error(fmt, ...) fprintf(stderr, "E " __FILE__ ":%d: " fmt "\n", __LINE__, ##__VA_ARGS__)
 //#ifdef DEBUG
 #define log_debug(fmt, ...) fprintf(stderr, "D " __FILE__ ":%d: " fmt "\n", __LINE__, ##__VA_ARGS__)
@@ -13,8 +15,9 @@
 //#define log_debug(fmt, ...)
 //#endif
 
-static const char* get_io_error_msg() {
+static const char* get_errno_msg() {
   switch(errno) {
+    case 0: return "No error";
     case EACCES: return "Another process has the file locked";
     case EBADF: return "stream is not a valid stream opened for reading";
     case EINTR: return "A signal interrupted the call";
@@ -36,82 +39,31 @@ static const char* get_io_error_msg() {
 #define CTX_COMMENT 4
 #define CTX_PRINT 8
 
-#define log_parse(fmt, ...) fprintf(stderr, "%s %lu:%-2lu  " fmt "\n", filename, line, column, ##__VA_ARGS__)
+#define log_parse(fmt, ...) fprintf(stdout, "%s %lu:%-2lu  " fmt "\n", filename, line, column, ##__VA_ARGS__)
 
-#define ELUA_LOADFILE_BUFMINSIZE 1024
 
-typedef struct {
-	unsigned char* ptr;
-	size_t size;
-	size_t length;
-} cstr;
 
-static cstr cstr_new(size_t size) {
-  cstr s = {(unsigned char *)malloc(sizeof(char)*(size+1)), size, 0};
-  s.ptr[0] = 0;
-  return s;
-}
 
-static void cstr_free(cstr *s) {
-  free(s->ptr);
-}
+static cstr buf;
 
-static void cstr_reset(cstr *s) {
-  s->length = 0;
-  s->ptr[s->length] = 0;
-}
-
-static int cstr_resize(cstr *s, const size_t increment) {
-  size_t new_size = s->size + increment + 1;
-  unsigned char *new = (unsigned char *)realloc(s->ptr, sizeof(char)*new_size);
-  if(new != NULL) {
-    s->ptr = new;
-    s->size = new_size;
-  } else {
-    return 1;
-  }
-  return 0;
-}
-
-static int cstr_append(cstr *s, const unsigned char *src, const size_t srclen) {
-  if(s->size - s->length < srclen) {
-    if(!cstr_resize(s, srclen)) {
-      return 1;
-    }
-  }
-  memcpy(s->ptr + s->length, src, srclen);
-  s->length += srclen;
-  s->ptr[s->length] = 0;
-  return 0;
-}
-
-static int cstr_appendc(cstr *s, const unsigned char ch) {
-  if(s->length >= s->size) {
-    if(!cstr_resize(s, (size_t)1)) {
-      return 1;
-    }
-  }
-  s->ptr[s->length++] = ch;
-  s->ptr[s->length] = 0;
-  return 0;
-}
-
-static unsigned char cstr_popc(cstr *s) {
-  if(s->length) {
-    unsigned char ch = s->ptr[s->length--];
-    s->ptr[s->length] = 0;
-    return ch;
-  }
-  return (unsigned char)0;
-}
-
-static int elua_loadfile(lua_State *L, const char *filename) {
+static int elua_push(lua_State *L, const int context) {
   
-  FILE *fp = fopen(filename, "r");
-  if(fp == NULL) {
-    log_error("Failed to open file '%s' for reading", filename);
-    return 1;
+  if(context & CTX_LUA && context & CTX_COMMENT) {
+    /*...*/
   }
+  
+  //switch(context) {}
+  // push line onto lua
+  /*error = luaL_loadbuffer(L, buff, strlen(buff), "line") || lua_pcall(L, 0, 0, 0);
+  if (error) {
+    fprintf(stderr, "%s", lua_tostring(L, -1));
+    lua_pop(L, 1);  // pop error message from the stack
+  }*/
+  cstr_reset(&buf);
+  return 0;
+}
+
+static int elua_loadfile(lua_State *L, const char *filename, FILE *fp) {
   
   int ch_prev = -1;
   int ch_prev_prev = -1;
@@ -120,14 +72,13 @@ static int elua_loadfile(lua_State *L, const char *filename) {
   int return_status = 0;
   size_t line = 1;
   size_t column = 0;
-  cstr buf = cstr_new(20*1024);
   
   while(++column) {
     ch = fgetc(fp);
     if(ch == EOF) {
       log_debug("EOF @ column %lu, line %lu", column, line);
       if(ferror(fp)) {
-        log_error("I/O Error #%d: %s", errno, get_io_error_msg());
+        log_error("I/O Error #%d: %s", errno, get_errno_msg());
         return_status = errno;
       } // else: EOF
       break;
@@ -135,12 +86,11 @@ static int elua_loadfile(lua_State *L, const char *filename) {
     
     if(context & CTX_TEXT) {
       if(ch_prev == '<' && ch == '%') {
-        context = CTX_LUA;
-        log_parse("TEXT -> LUA <%%");
+        log_parse("Switch: TEXT -> LUA <%%");
         cstr_popc(&buf); // remove '<'
-        log_parse("OUT:Text: (%lu) %s", buf.length, buf.ptr);
-        // push line onto lua
-        cstr_reset(&buf);
+        log_parse("Push: Text: (%lu) '%s'", buf.length, buf.ptr);
+        elua_push(L, context);
+        context = CTX_LUA;
       }
       else {
         cstr_appendc(&buf, ch);
@@ -148,33 +98,29 @@ static int elua_loadfile(lua_State *L, const char *filename) {
     }
     else if(context & CTX_LUA) {
       if(ch_prev == '%' && ch == '>') {
-        context = CTX_TEXT;
-        log_parse("LUA -> TEXT %%>");
-        
+        log_parse("Switch: LUA -> TEXT %%>");
+        cstr_popc(&buf); // remove '%'
+        //#ifdef DEBUG
         if(context & CTX_COMMENT) {
-          log_parse("OUT:Comment: %s", buf.ptr);
+          log_parse("Push: Comment: (%lu) '%s'", buf.length, buf.ptr);
+        } else if(context & CTX_PRINT) {
+          log_parse("Push: Lua-print: (%lu) '%s'", buf.length, buf.ptr);
+        } else {
+          log_parse("Push: Lua-eval: (%lu) '%s'", buf.length, buf.ptr);
         }
-        else {
-          cstr_popc(&buf); // remove '<'
-          log_parse("OUT:Lua: (%lu) %s", buf.length, buf.ptr);
-          // push line onto lua
-          /*error = luaL_loadbuffer(L, buff, strlen(buff), "line") || lua_pcall(L, 0, 0, 0);
-          if (error) {
-            fprintf(stderr, "%s", lua_tostring(L, -1));
-            lua_pop(L, 1);  // pop error message from the stack
-          }*/
-          cstr_reset(&buf);
-        }
+        //#endif
+        elua_push(L, context);
+        context = CTX_TEXT;
       }
       else if(ch_prev_prev == '<' && ch_prev == '%') {
         // the first char after "<%"
         if(ch == '#') {
           context |= CTX_COMMENT;
-          log_parse("LUA -> COMMENT <%%#");
+          log_parse("Switch: LUA -> COMMENT <%%#");
         }
         else if(ch == '=') {
           context |= CTX_PRINT;
-          log_parse("LUA -> PRINT <%%=");
+          log_parse("Switch: LUA -> PRINT <%%=");
         } 
         //else { log_parse(filename, line, column, "LUA == LUA"); }
       }
@@ -195,29 +141,62 @@ static int elua_loadfile(lua_State *L, const char *filename) {
   }
   
   lua_pop(L, 1);
-  fclose(fp);
+  cstr_reset(&buf);
   return return_status;
 }
-
-
-/*static int elua_print(lua_State *L) {
-  const char *s = luaL_checkstring(L, 1);
-  printf("%s", s);
-  return 0;
-}*/
 
 
 int main (int argc, char const *argv[]) {
   
   lua_State *L;
   int status;
+  const char *filename;
+  const char *stdin_filename;
+  FILE *fp;
   
+  fp = stdin;
+  buf = cstr_new(20*1024);
   L = lua_open();
   luaL_openlibs(L);
+  stdin_filename = "<stdin>";
+  filename = stdin_filename;
   
-  status = elua_loadfile(L, "test.elua");
+  // Filename from args?
+  if(argc > 1) {
+    filename = argv[1]; // not very safe, but who cares, really..
+    if(filename[0] == '-') {
+      if(strcmp(filename, "--version") == 0 || strcmp(filename, "-v") == 0) {
+        fprintf(stdout, "elua %s, built %s %s\n", "$Id$", __DATE__, __TIME__);
+        exit(0);
+      }
+      else {
+        fprintf(stderr, "Usage: %s [options|FILE]\n"
+          "FILE\n"
+          "  The name of a elua-file to execute. Read from stdin if not specified.\n"
+          "\n"
+          "Options:\n"
+          "  -h --help     Show this message to stderr and exit.\n"
+          "  -v --version  Print version to stdout and exit.\n"
+          ,argv[0]);
+        exit(1);
+      }
+    }
+  }
   
+  // Open file
+  if(filename != stdin_filename) {
+    fp = fopen(filename, "r");
+    if(fp == NULL) {
+      log_error("Failed to open file '%s' for reading. (Reason: %s)", filename, get_errno_msg());
+      return 1;
+    }
+  }
+  
+  // Parse & load
+  status = elua_loadfile(L, filename, fp);
+  
+  // Close down
+  fclose(fp);
   lua_close(L);
-  
   return status;
 }
