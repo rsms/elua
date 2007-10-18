@@ -4,7 +4,7 @@
 /* $Id$ */
 
 cstr cstr_new(size_t size) {
-  cstr s = {(unsigned char *)malloc(sizeof(char)*(size+1)), size, 0};
+  cstr s = {(unsigned char *)malloc(sizeof(char)*(size+1)), size, size, 0};
   s.ptr[0] = 0;
   return s;
 }
@@ -19,7 +19,12 @@ void cstr_reset(cstr *s) {
 }
 
 int cstr_resize(cstr *s, const size_t increment) {
-  size_t new_size = s->size + increment + 1;
+  size_t new_size;
+  if(increment < s->initial_size) {
+		new_size = s->size + s->initial_size + 1;
+	} else {
+	  new_size = s->size + increment + 1;
+	}
   unsigned char *new = (unsigned char *)realloc(s->ptr, sizeof(char)*new_size);
   if(new != NULL) {
     s->ptr = new;
@@ -31,7 +36,7 @@ int cstr_resize(cstr *s, const size_t increment) {
 }
 
 int cstr_append(cstr *s, const unsigned char *src, const size_t srclen) {
-  if(s->size - s->length < srclen) {
+  if(s->size - s->length <= srclen) {
     if(!cstr_resize(s, srclen)) {
       return 1;
     }
@@ -44,7 +49,7 @@ int cstr_append(cstr *s, const unsigned char *src, const size_t srclen) {
 
 int cstr_appendc(cstr *s, const unsigned char ch) {
   if(s->length >= s->size) {
-    if(!cstr_resize(s, (size_t)1)) {
+    if(cstr_resize(s, (size_t)1)) {
       return 1;
     }
   }

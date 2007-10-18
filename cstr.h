@@ -7,6 +7,7 @@
 
 typedef struct {
 	unsigned char* ptr;
+  size_t initial_size;
 	size_t size;
 	size_t length;
 } cstr;

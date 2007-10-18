@@ -156,7 +156,7 @@ int main (int argc, char const *argv[]) {
   FILE *fp;
   
   fp = stdin;
-  buf = cstr_new(20*1024);
+  buf = cstr_new(4096);
   L = lua_open();
   luaL_openlibs(L);
   stdin_filename = "<stdin>";
@@ -198,6 +198,7 @@ int main (int argc, char const *argv[]) {
   
   // Close down
   fclose(fp);
+  cstr_free(&buf);
   lua_close(L);
   return status;
 }
