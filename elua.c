@@ -7,6 +7,7 @@
 #include <lauxlib.h>
 
 #include "cstr.h"
+#include "version.h"
 
 #define log_error(fmt, ...) fprintf(stderr, "E " __FILE__ ":%d: " fmt "\n", __LINE__, ##__VA_ARGS__)
 //#ifdef DEBUG
@@ -166,7 +167,7 @@ int main (int argc, char const *argv[]) {
     filename = argv[1]; // not very safe, but who cares, really..
     if(filename[0] == '-') {
       if(strcmp(filename, "--version") == 0 || strcmp(filename, "-v") == 0) {
-        fprintf(stdout, "elua %s, built %s %s\n", "$Id$", __DATE__, __TIME__);
+        fprintf(stdout, "elua r%d, built %s %s\n", ELUA_VERSION, __DATE__, __TIME__);
         exit(0);
       }
       else {

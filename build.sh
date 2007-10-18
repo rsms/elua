@@ -12,6 +12,13 @@
 #
 #############################################
 
+cd `dirname "$0"`
+
+echo "#ifndef ELUA_VERSION" > version.h
+echo -n "#define ELUA_VERSION " >> version.h
+svn info . 2> /dev/null|grep 'Revision: '|cut -d ' ' -f 2 >> version.h
+echo '#endif' >> version.h
+
 if gcc -g -Wall -O2 -o elua elua.c cstr.c -llua -I/opt/local/include -L/opt/local/lib ; then
   if [ ! "$@" == "" ]; then
     ./elua $@
