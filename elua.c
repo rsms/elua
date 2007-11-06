@@ -45,6 +45,61 @@ static const char* get_errno_msg() {
 /**
  * Push something onto the lua stack
  */
+static int _elua_print_buf(lua_State *L, const int context, int output_started, cstr *buf) {
+  
+  if(buf->length == 0) {
+    return output_started;
+  }
+  
+  if( (!output_started) && ((context & CTX_PRINT) || (!(context & CTX_EVAL))) ) {
+    //compiler->out = rb_str_buf_cat(compiler->out, "send_headers!\n", 14);
+    //log_debug("push: send_headers()");
+    output_started = 1;
+  }
+  
+  if(context & CTX_EVAL) {
+    if(context & CTX_COMMENT) {
+      log_debug("Push: comment: (%lu) '%s'", buf->length, buf->ptr);
+      if(context & CTX_MULTILINE) {
+        printf(">>> --[[%s]]\n", buf->ptr);
+      }
+      else {
+        printf(">>> --%s\n", buf->ptr);
+      }
+      // discard
+    }
+    else if(context & CTX_PRINT) {
+      log_debug("Push: print: (%lu) '%s'", buf->length, buf->ptr);
+      cstr_appendc(buf, ')');
+      cstr_appendc(buf, '\n');
+      printf(">>> print(%s", buf->ptr);
+      //compiler->out = rb_str_buf_cat(out, "@out.write((", 12);
+      //compiler->out = rb_str_buf_cat(out, buf->ptr, buf->length);
+    }
+    else {
+      log_debug("Push: eval: (%lu) '%s'", buf->length, buf->ptr);
+      cstr_appendc(buf, '\n');
+      printf(">>> %s", buf->ptr);
+      //compiler->out = rb_str_buf_cat(compiler->out, buf->ptr, buf->length);
+    }
+  }
+  else {
+    log_debug("Push: text: (%lu) '%s'", buf->length, buf->ptr);
+    cstr_appendc(buf, '"');
+    cstr_appendc(buf, ')');
+    cstr_appendc(buf, '\n');
+    printf(">>> print(\"%s", buf->ptr);
+    //compiler->out = rb_str_buf_cat(compiler->out, "@out.write('", 12);
+    //compiler->out = rb_str_buf_cat(compiler->out, buf->ptr, buf->length);
+  }
+  
+  cstr_reset(buf);
+  return output_started;
+}
+
+/**
+ * Push something onto the lua stack
+ */
 static int _elua_push_buf(lua_State *L, const int context, int output_started, cstr *buf) {
   
   if(buf->length == 0) {
@@ -96,6 +151,11 @@ static int _elua_push_buf(lua_State *L, const int context, int output_started, c
   cstr_reset(buf);
   return output_started;
 }
+
+
+typedef int (__stdcall *CompareFunction)(const byte*, const byte*);
+
+//int _elua_push_cb
 
 /**
  * @param  L          The LUA stack/state
