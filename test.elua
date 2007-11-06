@@ -2,6 +2,11 @@
 
 <%
 
+headers = {
+  ["Content-Type"] = "text/html",
+  ["Status"] = "200"
+}
+
 headers["Content-Type"] = "text/html; charset=utf-8"
 
 local oldtostring = tostring
@@ -30,7 +35,7 @@ items = {
   <%# This is a comment %>
   <body>
     <ul>
-    <% for k, v in pairs(header) do %>
+    <% for k, v in pairs(headers) do %>
       <li><b><%= k %></b> = <%=v%></li>
     <% end %>
     </ul>
