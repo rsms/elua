@@ -5,16 +5,10 @@
 
 #include <lualib.h>
 #include <lauxlib.h>
-
+#define DEBUG 1
 #include "cstr.h"
 #include "version.h"
-
-#define log_error(fmt, ...) fprintf(stderr, "E " __FILE__ ":%d: " fmt "\n", __LINE__, ##__VA_ARGS__)
-//#ifdef DEBUG
-#define log_debug(fmt, ...) fprintf(stderr, "D " __FILE__ ":%d: " fmt "\n", __LINE__, ##__VA_ARGS__)
-//#else
-//#define log_debug(fmt, ...)
-//#endif
+#include "macros.h"
 
 static const char* get_errno_msg() {
   switch(errno) {
@@ -36,138 +30,204 @@ static const char* get_errno_msg() {
 }
 
 #define CTX_TEXT 1
-#define CTX_LUA 2
+#define CTX_EVAL 2
 #define CTX_COMMENT 4
 #define CTX_PRINT 8
+#define CTX_OUTPUT_STARTED 16
+#define CTX_MULTILINE 32
 
+#ifdef DEBUG
 #define log_parse(fmt, ...) fprintf(stdout, "%s %lu:%-2lu  " fmt "\n", filename, line, column, ##__VA_ARGS__)
+#else
+#define log_parse(fmt, ...)
+#endif
 
-
-
-
-static cstr buf;
-
-static int elua_push(lua_State *L, const int context) {
+/**
+ * Push something onto the lua stack
+ */
+static int _elua_push_buf(lua_State *L, const int context, int output_started, cstr *buf) {
   
-  if(context & CTX_LUA && context & CTX_COMMENT) {
-    /*...*/
+  if(buf->length == 0) {
+    return output_started;
   }
   
-  //switch(context) {}
-  // push line onto lua
-  /*error = luaL_loadbuffer(L, buff, strlen(buff), "line") || lua_pcall(L, 0, 0, 0);
-  if (error) {
-    fprintf(stderr, "%s", lua_tostring(L, -1));
-    lua_pop(L, 1);  // pop error message from the stack
-  }*/
-  cstr_reset(&buf);
-  return 0;
+  if( (!output_started) && ((context & CTX_PRINT) || (!(context & CTX_EVAL))) ) {
+    //compiler->out = rb_str_buf_cat(compiler->out, "send_headers!\n", 14);
+    //log_debug("push: send_headers()");
+    output_started = 1;
+  }
+  
+  if(context & CTX_EVAL) {
+    if(context & CTX_COMMENT) {
+      log_debug("Push: comment: (%lu) '%s'", buf->length, buf->ptr);
+      if(context & CTX_MULTILINE) {
+        printf(">>> --[[%s]]\n", buf->ptr);
+      }
+      else {
+        printf(">>> --%s\n", buf->ptr);
+      }
+      // discard
+    }
+    else if(context & CTX_PRINT) {
+      log_debug("Push: print: (%lu) '%s'", buf->length, buf->ptr);
+      cstr_appendc(buf, ')');
+      cstr_appendc(buf, '\n');
+      printf(">>> print(%s", buf->ptr);
+      //compiler->out = rb_str_buf_cat(out, "@out.write((", 12);
+      //compiler->out = rb_str_buf_cat(out, buf->ptr, buf->length);
+    }
+    else {
+      log_debug("Push: eval: (%lu) '%s'", buf->length, buf->ptr);
+      cstr_appendc(buf, '\n');
+      printf(">>> %s", buf->ptr);
+      //compiler->out = rb_str_buf_cat(compiler->out, buf->ptr, buf->length);
+    }
+  }
+  else {
+    log_debug("Push: text: (%lu) '%s'", buf->length, buf->ptr);
+    cstr_appendc(buf, '"');
+    cstr_appendc(buf, ')');
+    cstr_appendc(buf, '\n');
+    printf(">>> print(\"%s", buf->ptr);
+    //compiler->out = rb_str_buf_cat(compiler->out, "@out.write('", 12);
+    //compiler->out = rb_str_buf_cat(compiler->out, buf->ptr, buf->length);
+  }
+  
+  cstr_reset(buf);
+  return output_started;
 }
 
-static int elua_loadfile(lua_State *L, const char *filename, FILE *fp) {
+/**
+ * @param  L          The LUA stack/state
+ * @param  filename   Filename of the file or input being parsed
+ * @param  f          An open FD
+ * @param  buf        Buffer to use. Can be an already used buffer (reuse)
+ * @return 0 on success, <>0 on error
+ */
+static int elua_loadfile(lua_State *L, const char *filename, FILE *f, cstr *buf) {
   
-  int ch_prev = -1;
-  int ch_prev_prev = -1;
-  int ch;
+  log_debug("Entered elua_loadfile");
+  
+  int c;
+  int prev_c = -1;
+  int prev_prev_c = -1;
   int context = CTX_TEXT;
   int return_status = 0;
+  int output_started = 0;
   size_t line = 1;
   size_t column = 0;
   
+  // Make sure buf is reset
+  cstr_reset(buf);
+  
+  log_debug("Entering read-loop");
   while(++column) {
-    ch = fgetc(fp);
-    if(ch == EOF) {
+    c  = fgetc(f); // We might want to wrap this in TRAP_BEG .. TRAP_END
+    // Handle EOF
+    if(c == EOF) {
       log_debug("EOF @ column %lu, line %lu", column, line);
-      if(ferror(fp)) {
+      if(ferror(f)) {
         log_error("I/O Error #%d: %s", errno, get_errno_msg());
+        clearerr(f);
         return_status = errno;
-      } // else: EOF
-      break;
+      }
+      else if(buf->length != 0) {
+        output_started = _elua_push_buf(L, context, output_started, buf);
+      }
+      break; 
     }
     
+    // In text context?
     if(context & CTX_TEXT) {
-      if(ch_prev == '<' && ch == '%') {
-        log_parse("Switch: TEXT -> LUA <%%");
-        cstr_popc(&buf); // remove '<'
-        log_parse("Push: Text: (%lu) '%s'", buf.length, buf.ptr);
-        elua_push(L, context);
-        context = CTX_LUA;
+      if(prev_c == '<' && c == '%') {
+        log_parse("Switch: TEXT -> EVAL <%%");
+        cstr_popc(buf); // remove '<'
+        log_parse("Push: TEXT: (%lu) '%s'", buf->length, buf->ptr);
+        output_started = _elua_push_buf(L, context, output_started, buf);
+        context = CTX_EVAL;
       }
       else {
-        cstr_appendc(&buf, ch);
+        if(c == '"') { // Escape " in text
+          cstr_appendc(buf, '\\');
+        }
+        cstr_appendc(buf, c);
       }
     }
-    else if(context & CTX_LUA) {
-      if(ch_prev == '%' && ch == '>') {
-        log_parse("Switch: LUA -> TEXT %%>");
-        cstr_popc(&buf); // remove '%'
+    // In eval context?
+    else if(context & CTX_EVAL) {
+      if(prev_c == '%' && c == '>') {
+        log_parse("Switch: EVAL -> TEXT %%>");
+        cstr_popc(buf); // remove '%'
         //#ifdef DEBUG
-        if(context & CTX_COMMENT) {
-          log_parse("Push: Comment: (%lu) '%s'", buf.length, buf.ptr);
-        } else if(context & CTX_PRINT) {
-          log_parse("Push: Lua-print: (%lu) '%s'", buf.length, buf.ptr);
-        } else {
-          log_parse("Push: Lua-eval: (%lu) '%s'", buf.length, buf.ptr);
-        }
+          if(context & CTX_COMMENT) {
+            log_parse("Push: EVAL Comment: (%lu) '%s'", buf->length, buf->ptr);
+          } else if(context & CTX_PRINT) {
+            log_parse("Push: EVAL print: (%lu) '%s'", buf->length, buf->ptr);
+          } else {
+            log_parse("Push: EVAL: (%lu) '%s'", buf->length, buf->ptr);
+          }
         //#endif
-        elua_push(L, context);
+        output_started = _elua_push_buf(L, context, output_started, buf);
         context = CTX_TEXT;
       }
-      else if(ch_prev_prev == '<' && ch_prev == '%') {
+      else if(prev_prev_c == '<' && prev_c == '%') {
         // the first char after "<%"
-        if(ch == '#') {
+        if(c == '#') {
           context |= CTX_COMMENT;
-          log_parse("Switch: LUA -> COMMENT <%%#");
+          log_parse("Switch: EVAL -> COMMENT <%%#");
         }
-        else if(ch == '=') {
+        else if(c == '=') {
           context |= CTX_PRINT;
-          log_parse("Switch: LUA -> PRINT <%%=");
+          log_parse("Switch: EVAL -> PRINT <%%=");
         } 
-        //else { log_parse(filename, line, column, "LUA == LUA"); }
+        //else { log_parse(filename, line, column, "EVAL == EVAL"); }
       }
       else {
-        cstr_appendc(&buf, ch);
+        cstr_appendc(buf, c);
       }
-      //else { log_parse(filename, line, column, "LUA == LUA %c %c", ch_prev_prev, ch_prev); }
+      //else { log_parse(filename, line, column, "EVAL == EVAL %c %c", prev_prev_c, prev_c); }
     }
-    //else { log_debug("nomatch %d (%d, %d)", context & CTX_LUA, context, CTX_LUA); }
-    
-    if(ch == '\n') {
+    //else { log_debug("nomatch %d (%d, %d)", context & CTX_EVAL, context, CTX_EVAL); }
+    if(c == '\n') {
+      if(!(context & CTX_MULTILINE)) {
+        context |= CTX_MULTILINE;
+      }
       line++;
       column = 0;
     }
     
-    ch_prev_prev = ch_prev;
-    ch_prev = ch;
+    prev_prev_c = prev_c;
+    prev_c = c;
   }
   
-  lua_pop(L, 1);
-  cstr_reset(&buf);
+  cstr_reset(buf);
   return return_status;
 }
 
+/* ------------------------------------------------ */
 
 int main (int argc, char const *argv[]) {
   
-  lua_State *L;
-  int status;
-  const char *filename;
-  const char *stdin_filename;
-  FILE *fp;
+  lua_State   *L;
+  cstr        buf;
+  int         status;
+  const char  *filename;
+  const char  *stdin_filename;
+  FILE        *fp;
   
-  fp = stdin;
-  buf = cstr_new(4096);
-  L = lua_open();
+  fp              = stdin;
+  buf             = cstr_new(4096);
+  L               = lua_open();
   luaL_openlibs(L);
-  stdin_filename = "<stdin>";
-  filename = stdin_filename;
+  stdin_filename  = "<stdin>";
+  filename        = stdin_filename;
   
   // Filename from args?
   if(argc > 1) {
     filename = argv[1]; // not very safe, but who cares, really..
     if(filename[0] == '-') {
       if(strcmp(filename, "--version") == 0 || strcmp(filename, "-v") == 0) {
-        fprintf(stdout, "elua r%d, built %s %s\n", ELUA_VERSION, __DATE__, __TIME__);
+        fprintf(stdout, "elua %s r%d, built %s %s\n", ELUA_VERSION_STRING, ELUA_REVISION, __DATE__, __TIME__);
         exit(0);
       }
       else {
@@ -194,7 +254,7 @@ int main (int argc, char const *argv[]) {
   }
   
   // Parse & load
-  status = elua_loadfile(L, filename, fp);
+  status = elua_loadfile(L, filename, fp, &buf);
   
   // Close down
   fclose(fp);
