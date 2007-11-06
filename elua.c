@@ -10,6 +10,7 @@
 #include "version.h"
 #include "macros.h"
 
+// Note:
 // XXX Includes, see: http://pgl.yoyo.org/luai/i/dofile
 
 static const char* get_errno_msg() {
