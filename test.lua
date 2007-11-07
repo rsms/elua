@@ -1,9 +1,14 @@
-send_headers()
-
-print("\
+io.write("\
 \
 ")
- 
+
+headers = {
+  ["Content-Type"] = "text/html",
+  ["Status"] = "200"
+}
+
+function send_headers() end
+
 headers["Content-Type"] = "text/html; charset=utf-8"
 
 local oldtostring = tostring
@@ -23,39 +28,33 @@ items = {
 }
 
 
-print("
-<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">
-<html xmlns=\"http://www.w3.org/1999/xhtml\" xml:lang=\"en\" lang=\"en\">
-  <head>
-    <meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"/>
+io.write("\
+<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">\
+<html xmlns=\"http://www.w3.org/1999/xhtml\" xml:lang=\"en\" lang=\"en\">\
+  <head>\
+    <meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"/>\
     <title>")
-print( page_title )
-print("</title>
-  </head>
+io.write( page_title )
+io.write("</title>\
+  </head>\
   ")
---[[ This is a comment ]]
-print("
-  <body>
-    <ul>
+io.write("\
+  <body>\
+    <ul>\
     ")
-for k, v in pairs(header) do 
-print("
+for k, v in pairs(headers) do 
+io.write("\
       <li><b>")
-print( k )
-print("</b> = ")
-print(v)
-print("</li>
+io.write( k )
+io.write("</b> = ")
+io.write(v)
+io.write("</li>\
     ")
 end 
-print("
-    </ul>
-  </body>  
+io.write("\
+    </ul>\
+  </body>  \
   ")
---[[ 
-    Comments
-    can be
-    multiline
-  ]]
-print("
-</html>
+io.write("\
+</html>\
 ")
