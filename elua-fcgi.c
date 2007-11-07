@@ -199,7 +199,7 @@ int main (int argc, char const *argv[]) {
 		//lua_setfield(L, -2, "print"); /* -1 is the env we want to set(sp -= 1) */
     
 		lua_newtable(L); /* the meta-table for the new env  */
-		lua_pushvalue(L, LUA_GLOBALSINDEX);
+		//lua_pushvalue(L, LUA_GLOBALSINDEX); // for lua_setfenv
 		lua_setfield(L, -2, "__index"); /* { __index = _G } */
 		lua_setmetatable(L, -2); /* setmetatable({}, {__index = _G}) */
 		//lua_setfenv(L, -2); /* on the stack should be a modified env */
