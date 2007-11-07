@@ -1,3 +1,5 @@
+send_headers()
+
 print("\
 \
 ")

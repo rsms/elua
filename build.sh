@@ -21,8 +21,10 @@ cd `dirname "$0"`
 svnversion|sed -E 's/[^0-9]//g' >> version.h
 /bin/echo '#endif' >> version.h
 
-if gcc -g -Wall -O2 -o elua elua.c cstr.c -llua -I/opt/local/include -L/opt/local/lib ; then
+if gcc -g -Wall -O2 -o elua cstr.c elua.c elua_main.c -llua -I/opt/local/include -L/opt/local/lib ; then
   if [ ! "$@" == "" ]; then
     ./elua $@
   fi
 fi
+
+exit $?
