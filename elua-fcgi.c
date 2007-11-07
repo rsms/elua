@@ -1,5 +1,6 @@
 #include <sys/stat.h>
 
+//#include <lua.h>
 #include <lualib.h>
 #include <lauxlib.h>
 
@@ -26,6 +27,167 @@ static struct {
 
 elua_context_t elua_ctx;
 
+
+static lua_State *getthread (lua_State *L, int *arg) {
+  if (lua_isthread(L, 1)) {
+    *arg = 1;
+    return lua_tothread(L, 1);
+  }
+  else {
+    *arg = 0;
+    return L;
+  }
+}
+
+
+// These two come from lua/ldblib.c
+#define TB_LEVELS1	12	/* size of the first part of the stack */
+#define TB_LEVELS2	10	/* size of the second part of the stack */
+
+static int format_traceback_text (lua_State *L) {
+  int level;
+  int firstpart = 1;  /* still before eventual `...' */
+  int arg;
+  lua_State *L1 = getthread(L, &arg);
+  lua_Debug ar;
+  if (lua_isnumber(L, arg+2)) {
+    level = (int)lua_tointeger(L, arg+2);
+    lua_pop(L, 1);
+  }
+  else
+    level = (L == L1) ? 1 : 0;  /* level 0 may be this own function */
+  if (lua_gettop(L) == arg)
+    lua_pushliteral(L, "");
+  else if (!lua_isstring(L, arg+1)) return 1;  /* message is not a string */
+  //else lua_pushliteral(L, "\n");
+  //lua_pushliteral(L, "stack traceback:");
+  while (lua_getstack(L1, level++, &ar)) {
+    if (level > TB_LEVELS1 && firstpart) {
+      /* no more than `LEVELS2' more levels? */
+      if (!lua_getstack(L1, level+TB_LEVELS2, &ar))
+        level--;  /* keep going */
+      else {
+        lua_pushliteral(L, "  ...\n");  /* too many levels */
+        while (lua_getstack(L1, level+TB_LEVELS2, &ar))  /* find last levels */
+          level++;
+      }
+      firstpart = 0;
+      continue;
+    }
+    lua_pushliteral(L, "  ");
+    lua_getinfo(L1, "Snl", &ar);
+    lua_pushfstring(L, "%s:", ar.short_src);
+    if (ar.currentline > 0)
+      lua_pushfstring(L, "%d:", ar.currentline);
+    if (*ar.namewhat != '\0')  /* is there a name? */
+        lua_pushfstring(L, " in function " LUA_QS, ar.name);
+    else {
+      if (*ar.what == 'm')  /* main? */
+        lua_pushfstring(L, " {main}");
+      else if (*ar.what == 'C' || *ar.what == 't')
+        lua_pushliteral(L, " ?");  /* C function or tail call */
+      else
+        lua_pushfstring(L, " in function <%s:%d>",
+                           ar.short_src, ar.linedefined);
+    }
+    lua_pushliteral(L, "\n");
+    lua_concat(L, lua_gettop(L) - arg);
+  }
+  lua_concat(L, lua_gettop(L) - arg);
+  return 1;
+}
+
+
+static int format_traceback_xhtml (lua_State *L) {
+  // More info: http://pgl.yoyo.org/luai/i/lua_Debug
+  int level;
+  int firstpart = 1;  /* still before eventual `...' */
+  int arg;
+  lua_State *L1 = getthread(L, &arg);
+  lua_Debug ar;
+  if (lua_isnumber(L, arg+2)) {
+    level = (int)lua_tointeger(L, arg+2);
+    lua_pop(L, 1);
+  }
+  else
+    level = (L == L1) ? 1 : 0;  /* level 0 may be this own function */
+  if (lua_gettop(L) == arg)
+    lua_pushliteral(L, "");
+  else if (!lua_isstring(L, arg+1)) return 1;  /* message is not a string */
+  //else lua_pushliteral(L, "\n");
+  //lua_pushliteral(L, "stack traceback:");
+  while (lua_getstack(L1, level++, &ar)) {
+    if (level > TB_LEVELS1 && firstpart) {
+      /* no more than `LEVELS2' more levels? */
+      if (!lua_getstack(L1, level+TB_LEVELS2, &ar))
+        level--;  /* keep going */
+      else {
+        //lua_pushliteral(L, "<li>...</li>\n");  /* too many levels */
+        lua_pushfstring(L, "<li class=\"frame level%d\">...</li>", level-1);
+        while (lua_getstack(L1, level+TB_LEVELS2, &ar))  /* find last levels */
+          level++;
+      }
+      firstpart = 0;
+      continue;
+    }
+    //lua_pushliteral(L, "<li class=\"frame\">");
+    lua_pushfstring(L, "<li class=\"frame level%d\">", level-1);
+    lua_getinfo(L1, "Snl", &ar);
+    
+    if(ar.source[0] == '@') {
+      lua_pushfstring(L, "<em class=\"file\">%s</em>:", ar.short_src);
+    } else {
+      lua_pushfstring(L, "<em class=\"short_src\">%s</em>:", ar.short_src);
+    }
+    
+    if (ar.currentline > 0)
+      lua_pushfstring(L, "<span class=\"line\">%d</span>:", ar.currentline);
+    if (*ar.namewhat != '\0')  /* is there a name? */
+        lua_pushfstring(L, " in function <b class=\"function\">" LUA_QS "</b>", ar.name);
+    else {
+      if (*ar.what == 'm')  /* main? */
+        lua_pushfstring(L, " <b class=\"function main\">{main}</b>");
+      else if (*ar.what == 'C' || *ar.what == 't')
+        lua_pushliteral(L, " <b class=\"function unknown\">?</b>");  /* C function or tail call */
+      else
+        lua_pushfstring(L, " in function <b class=\"function\">%s</b>:<span class=\"line\">%d</span>",
+                           ar.short_src, ar.linedefined);
+    }
+    lua_pushliteral(L, "</li>\n");
+    lua_concat(L, lua_gettop(L) - arg);
+  }
+  lua_concat(L, lua_gettop(L) - arg);
+  return 1;
+}
+
+
+static void begin_500_response(const char *title) {
+  FCGX_PutStr("Status: 500\r\n"
+    "Content-type: text/html\r\n"
+    "\r\n"
+    "<html><head><title>",
+    59, request.out);
+  
+  if(title == NULL) {
+    FCGX_PutStr(
+      "500 Internal Error</title></head><body><h1>500 Internal Error",
+      61, request.out);
+  }
+  else {
+    FCGX_FPrintF(request.out,
+      "%s</title></head><body><h1>%s",
+      title, title);
+  }
+  
+  FCGX_PutStr("</h1>", 5, request.out);
+}
+
+static void end_500_response() {
+  FCGX_FPrintF(request.out,
+    "<hr/><address>luwa/" ELUA_VERSION_STRING " r%d</address>"
+    "</body></html>", ELUA_REVISION);
+}
+
 static int cache_script(lua_State *L, const char *fn, time_t mtime) {
   int status = 0;
 	/* 
@@ -35,8 +197,20 @@ static int cache_script(lua_State *L, const char *fn, time_t mtime) {
 	 */
 
 	if((status = elua_loadfile(L, fn, &elua_ctx))) {
-    FCGX_FPrintF(request.err, "Syntax error: %s\n", lua_tostring(L, -1));
-	  lua_pop(L, 1); /* remove the error-msg and the function copy from the stack */
+    const char *errmsg = lua_tostring (L, -1);
+    lua_pop(L, 1); /* remove the error-msg and the function copy from the stack */
+    
+    FCGX_FPrintF(request.err, "Syntax error: %s", errmsg);
+    
+    begin_500_response(NULL);
+    FCGX_FPrintF(request.out,
+      "<h2>Syntax error</h2>"
+      "<p>"
+        "<tt>%s</tt>"
+      "</p>\n", errmsg);
+    // TODO: Add source code
+    end_500_response();
+    
 		return status;
 	}
 
@@ -144,6 +318,43 @@ static int response_print(lua_State *L) {
 	return 0;
 }
 
+
+static int on_runtime_error(lua_State *L) {
+  const char *msg;
+  
+  // Get error message/description
+  msg = luaL_checkstring(L, 1);
+  lua_pop(L, 1);
+	
+	// Retrieve traceback by calling debug.traceback()
+	/*lua_getfield(L, LUA_GLOBALSINDEX, "debug");
+  lua_getfield(L, -1, "traceback");
+  lua_call(L, 0, 1);'*/
+  
+  // Log to server
+  if(format_traceback_text(L)) {
+    FCGX_FPrintF(request.err, "Runtime error in %s\n%s", msg, lua_tostring(L, -1));
+    lua_pop(L, 1);
+  } else {
+    FCGX_FPrintF(request.err, "Runtime error in %s", msg);
+  }
+  
+  //if(conf.show_errors) {
+    // Send error to client
+    // TODO: Examine response.headers and guess what format the traceback should be in
+    if(/*conf.error_include_traceback && */format_traceback_xhtml(L)) {
+      FCGX_FPrintF(request.out, "\n<h4>Error in %s</h4><ol class=\"traceback\">\n%s</ol>\n", msg, lua_tostring(L, -1));
+      lua_pop(L, 1);
+    } else {
+      FCGX_FPrintF(request.out, "\n<h4>Error in %s</h4>\n", msg);
+    }
+  //}
+	
+	// Return
+	return 1;
+}
+
+
 int main (int argc, char const *argv[]) {
   int status;
   lua_State   *L;
@@ -194,9 +405,11 @@ int main (int argc, char const *argv[]) {
   	lua_setfield(L, LUA_GLOBALSINDEX, "response");
     lua_pop(L, 1);*/
     
+    
 		/* we have to overwrite the print function */
 		//lua_pushcfunction(L, response_print);                       /* (sp += 1) */
 		//lua_setfield(L, -2, "print"); /* -1 is the env we want to set(sp -= 1) */
+    
     
 		lua_newtable(L); /* the meta-table for the new env  */
 		//lua_pushvalue(L, LUA_GLOBALSINDEX); // for lua_setfenv
@@ -207,15 +420,19 @@ int main (int argc, char const *argv[]) {
     // XXX temporary
     FCGX_FPrintF(request.out, "Content-type: text/html\r\n\r\n");
     
-		if (lua_pcall(L, 0, 1, 0)) {
-      const char *errstr = lua_tostring(L, -1);
-		  FCGX_FPrintF(request.err, "%s\n", errstr);
-			log_error("%s\n", errstr);
+    // Execute script
+    lua_pushcfunction(L, on_runtime_error); // Push error handler
+    lua_settop(L, 2);
+    lua_insert(L, 1);  // put error function under function to be called
+    lua_pcall(L, 0, LUA_MULTRET, 1);
+    //lua_pushboolean(L, (st == 0));
+    lua_replace(L, 1);
+    if(lua_gettop(L)) { // !0 = runtime error (which was handled by on_runtime_error)
+      // Runtime error occured
+			//lua_pop(L, 1); // pop away error // needed while lua_pushboolean(L, (st == 0)); was enabled
 			lua_pop(L, 1);
-			continue;
 		}
     
-		lua_pop(L, 1);
 		assert(lua_gettop(L) == 0);
     
     /*FCGX_FPrintF(request.out,

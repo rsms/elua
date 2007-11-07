@@ -39,8 +39,17 @@ items = {
       <li><b><%= k %></b> = <%=v%></li>
     <% end %>
     </ul>
-  </body>  
-  <%# 
+  </body>
+    <%
+    
+    function a() b() end
+    function b() c() end
+    function c() d() end
+    function d() error("Scheisse!") end
+    a()
+    
+    %>
+  <%#
     Comments
     can be
     multiline

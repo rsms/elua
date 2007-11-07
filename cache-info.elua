@@ -1,0 +1,24 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+    <title>Cache info</title>
+  </head>
+  <body>
+    <h1>Cache info</h1>
+    <table border="1">
+      <tr>
+        <th width="50%">script-name</th>
+        <th width="20%">mtime</th>
+        <th width="20%">hits</th>
+      </tr>
+      <% for k, v in pairs(elua.cache) do %>
+        <tr>
+          <td><%= k %></td>
+          <td align="right"><%= os.date("%c", v.mtime) %></td>
+          <td align="right"><%= v.hits %></td>
+        </tr>
+      <% end %>
+    </table>
+  </body>  
+</html>

@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <assert.h>
+
 #include <lauxlib.h>
 
 //#define DEBUG 1
@@ -92,13 +94,13 @@ static int elua_push_buf(lua_State *L, const int context, int *output_started, e
         if(context & CTX_MULTILINE) {
           cstr_append(ctx->out, "--[[", 4);
           cstr_append_cstr(ctx->out, ctx->buf);
-          cstr_append(ctx->out, "]]\n", 3);
+          cstr_append(ctx->out, "]] ", 3); // was: "]]\n"
         }
         else {
           cstr_appendc(ctx->out, '-');
           cstr_appendc(ctx->out, '-');
           cstr_append_cstr(ctx->out, ctx->buf);
-          cstr_appendc(ctx->out, '\n');
+          cstr_appendc(ctx->out, ' '); // was: \n
         }
       }
     }
@@ -108,12 +110,12 @@ static int elua_push_buf(lua_State *L, const int context, int *output_started, e
       cstr_append(ctx->out, "print(", 6);
       cstr_append_cstr(ctx->out, ctx->buf);
       cstr_appendc(ctx->out, ')');
-      cstr_appendc(ctx->out, '\n');
+      cstr_appendc(ctx->out, ' '); // was: \n
     }
     else {
       log_debug("Push: eval: (%lu) '%s'", ctx->buf->length, ctx->buf->ptr);
       cstr_append_cstr(ctx->out, ctx->buf);
-      cstr_appendc(ctx->out, '\n');
+      cstr_appendc(ctx->out, ' '); // was: \n
     }
   }
   else {
@@ -123,7 +125,7 @@ static int elua_push_buf(lua_State *L, const int context, int *output_started, e
     cstr_append_cstr(ctx->out, ctx->buf);
     cstr_appendc(ctx->out, '"');
     cstr_appendc(ctx->out, ')');
-    cstr_appendc(ctx->out, '\n');
+    cstr_appendc(ctx->out, ' '); // was: \n
   }
   
   cstr_reset(ctx->buf);
@@ -193,6 +195,7 @@ int elua_parse_file(lua_State *L, FILE *f, elua_context_t *ctx) {
     if(context & CTX_TEXT) {
       if(prev_c == '<' && c == '%') {
         log_parse("Switch: TEXT -> EVAL <%%");
+        assert(ctx->buf->ptr[ctx->buf->length-1] == '<');
         cstr_popc(ctx->buf); // remove '<'
         log_parse("Push: TEXT: (%lu) '%s'", ctx->buf->length, ctx->buf->ptr);
         elua_push_buf(L, context, &output_started, ctx);
@@ -209,6 +212,7 @@ int elua_parse_file(lua_State *L, FILE *f, elua_context_t *ctx) {
     else if(context & CTX_EVAL) {
       if(prev_c == '%' && c == '>') {
         log_parse("Switch: EVAL -> TEXT %%>");
+        assert(ctx->buf->ptr[ctx->buf->length-1] == '%');
         cstr_popc(ctx->buf); // remove '%'
 #ifdef DEBUG
           if(context & CTX_COMMENT) {
@@ -219,7 +223,7 @@ int elua_parse_file(lua_State *L, FILE *f, elua_context_t *ctx) {
             log_parse("Push: EVAL: (%lu) '%s'", ctx->buf->length, ctx->buf->ptr);
           }
 #endif
-        if((status = elua_push_buf(L, context, &output_started, ctx))) break;
+        elua_push_buf(L, context, &output_started, ctx);
         context = CTX_TEXT;
       }
       else if(prev_prev_c == '<' && prev_c == '%') {
@@ -231,13 +235,14 @@ int elua_parse_file(lua_State *L, FILE *f, elua_context_t *ctx) {
         else if(c == '=') {
           context |= CTX_PRINT;
           log_parse("Switch: EVAL -> PRINT <%%=");
-        } 
-        //else { log_parse(filename, line, column, "EVAL == EVAL"); }
+        }
+        else {
+          cstr_appendc(ctx->buf, c);
+        }
       }
       else {
         cstr_appendc(ctx->buf, c);
       }
-      //else { log_parse(filename, line, column, "EVAL == EVAL %c %c", prev_prev_c, prev_c); }
     }
     //else { log_debug("nomatch %d (%d, %d)", context & CTX_EVAL, context, CTX_EVAL); }
     if(c == '\n') {

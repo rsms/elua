@@ -1,6 +1,9 @@
 #ifndef MACROS_H
 #define MACROS_H
 
+// Define to disable assertions
+//#define NDEBUG
+
 // Helpers
 #define log_error(fmt, ...) fprintf(stderr, "E " __FILE__ ":%d: " fmt "\n", __LINE__, ##__VA_ARGS__)
 #ifdef DEBUG
