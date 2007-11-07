@@ -13,13 +13,6 @@
 // Note:
 // XXX Includes, see: http://pgl.yoyo.org/luai/i/dofile
 
-elua_conf_t elua_conf_defaults() {
-  elua_conf_t c;
-  c.strip_comments = 1;
-  c.auto_begin_response_call = 0;
-  return c;
-}
-
 #define CTX_TEXT 1
 #define CTX_EVAL 2
 #define CTX_COMMENT 4
@@ -33,6 +26,8 @@ elua_conf_t elua_conf_defaults() {
 #define log_parse(fmt, ...)
 #endif
 
+/* ------------------------------------------------------------------------- */
+
 static int set_file_error(lua_State *L/*, const char *what, const char *filename*/) {
   const char *serr = strerror(errno);
   //lua_pushfstring(L, "cannot %s %s: %s", what, filename, serr);
@@ -41,7 +36,7 @@ static int set_file_error(lua_State *L/*, const char *what, const char *filename
 }
 
 const char *elua_load_cstr_reader(lua_State *L, void *ud, size_t *size) {
-  cstr *buf = (cstr *)ud;
+  cstr_t *buf = (cstr_t *)ud;
   (void)L;
   if(buf->length == 0) return NULL;
   *size = buf->length;
@@ -50,10 +45,10 @@ const char *elua_load_cstr_reader(lua_State *L, void *ud, size_t *size) {
   return (const char *)buf->ptr;
 }
 
-typedef struct {
+/*typedef struct {
   char    *prefix_ptr;
   size_t  prefix_len;
-  cstr    *buf;
+  cstr_t  *buf;
 } elua_prefixed_cstr_t;
 
 const char *elua_load_prefixed_cstr_reader(lua_State *L, void *ud, size_t *size) {
@@ -69,89 +64,112 @@ const char *elua_load_prefixed_cstr_reader(lua_State *L, void *ud, size_t *size)
   pc->buf->length = 0;
   //log_error("reader sending (%lu) '%s'", *size, pc->buf->ptr);
   return (const char *)pc->buf->ptr;
-}
+}*/
 
+/* ------------------------------------------------------------------------- */
+/* Private */
 
 /**
  * Push something onto the lua stack
  */
-static int elua_push_buf(lua_State *L, const int context, int *output_started, cstr *buf, cstr *out, elua_conf_t *conf) {
+static int elua_push_buf(lua_State *L, const int context, int *output_started, elua_context_t *ctx) {
   
   int status = 0;
   
-  if(buf->length == 0) {
+  if(ctx->buf->length == 0) {
     return 0;
   }
   
-  if( conf->auto_begin_response_call && (!*output_started) && ((context & CTX_PRINT) || (!(context & CTX_EVAL))) ) {
-    cstr_append(out, "send_headers()\n", 15);
+  if( ctx->conf->auto_begin_response_call && (!*output_started) && ((context & CTX_PRINT) || (!(context & CTX_EVAL))) ) {
+    cstr_append(ctx->out, "send_headers()\n", 15);
     *output_started = 1;
   }
   
   if(context & CTX_EVAL) {
     if(context & CTX_COMMENT) {
-      if(!conf->strip_comments) {
-        log_debug("Push: comment: (%lu) '%s'", buf->length, buf->ptr);
+      if(!ctx->conf->strip_comments) {
+        log_debug("Push: comment: (%lu) '%s'", ctx->buf->length, ctx->buf->ptr);
         if(context & CTX_MULTILINE) {
-          cstr_append(out, "--[[", 4);
-          cstr_append(out, buf->ptr, buf->length);
-          cstr_append(out, "]]\n", 3);
+          cstr_append(ctx->out, "--[[", 4);
+          cstr_append_cstr(ctx->out, ctx->buf);
+          cstr_append(ctx->out, "]]\n", 3);
         }
         else {
-          cstr_appendc(out, '-');
-          cstr_appendc(out, '-');
-          cstr_append(out, buf->ptr, buf->length);
-          cstr_appendc(out, '\n');
+          cstr_appendc(ctx->out, '-');
+          cstr_appendc(ctx->out, '-');
+          cstr_append_cstr(ctx->out, ctx->buf);
+          cstr_appendc(ctx->out, '\n');
         }
       }
     }
     else if(context & CTX_PRINT) {
-      log_debug("Push: print: (%lu) '%s'", buf->length, buf->ptr);
+      log_debug("Push: print: (%lu) '%s'", ctx->buf->length, ctx->buf->ptr);
       
-      cstr_append(out, "io.write(", 9);
-      cstr_append(out, buf->ptr, buf->length);
-      cstr_appendc(out, ')');
-      cstr_appendc(out, '\n');
+      cstr_append(ctx->out, "print(", 6);
+      cstr_append_cstr(ctx->out, ctx->buf);
+      cstr_appendc(ctx->out, ')');
+      cstr_appendc(ctx->out, '\n');
     }
     else {
-      log_debug("Push: eval: (%lu) '%s'", buf->length, buf->ptr);
-      cstr_append(out, buf->ptr, buf->length);
-      cstr_appendc(out, '\n');
+      log_debug("Push: eval: (%lu) '%s'", ctx->buf->length, ctx->buf->ptr);
+      cstr_append_cstr(ctx->out, ctx->buf);
+      cstr_appendc(ctx->out, '\n');
     }
   }
   else {
-    log_debug("Push: text: (%lu) '%s'", buf->length, buf->ptr);
+    log_debug("Push: text: (%lu) '%s'", ctx->buf->length, ctx->buf->ptr);
     
-    cstr_append(out, "io.write(\"", 10);
-    cstr_append(out, buf->ptr, buf->length);
-    cstr_appendc(out, '"');
-    cstr_appendc(out, ')');
-    cstr_appendc(out, '\n');
+    cstr_append(ctx->out, "print(\"", 7);
+    cstr_append_cstr(ctx->out, ctx->buf);
+    cstr_appendc(ctx->out, '"');
+    cstr_appendc(ctx->out, ')');
+    cstr_appendc(ctx->out, '\n');
   }
   
-  cstr_reset(buf);
+  cstr_reset(ctx->buf);
   
   return status;
 }
 
+/* ------------------------------------------------------------------------- */
+/* Public */
 
+// Initialize a new context
+void elua_init_context(elua_context_t *ctx) {
+  ctx->conf = (elua_conf_t*)malloc(sizeof(elua_conf_t));
+  ctx->buf = cstr_new(4096);
+  ctx->out = cstr_new(4096);
+  elua_reset_conf(ctx->conf);
+}
 
-int elua_parse_file(lua_State *L, FILE *f, cstr *buf, cstr *out, elua_conf_t *conf) {
+// Free an initialized context
+void elua_free_context(elua_context_t *ctx) {
+  free(ctx->conf);
+  cstr_free(ctx->buf); free(ctx->buf);
+  cstr_free(ctx->out); free(ctx->out);
+}
+
+void elua_reset_conf(elua_conf_t *conf) {
+  conf->strip_comments = 1;
+  conf->auto_begin_response_call = 0;
+}
+
+int elua_parse_file(lua_State *L, FILE *f, elua_context_t *ctx) {
   
   log_debug("Entered elua_parse_file");
   
   int c;
   int prev_c = -1;
   int prev_prev_c = -1;
-  int context = CTX_TEXT;
+  int context = CTX_TEXT; // parser context
   int status = 0;
   int output_started = 0;
   size_t line = 1;
   size_t column = 0;
   
   // Make sure buf is reset
-  cstr_reset(buf);
-  cstr_reset(out);
+  cstr_reset(ctx->buf);
+  cstr_reset(ctx->out);
   
   
   log_debug("Entering read-loop");
@@ -165,8 +183,8 @@ int elua_parse_file(lua_State *L, FILE *f, cstr *buf, cstr *out, elua_conf_t *co
         //clearerr(f);
         status = set_file_error(L);
       }
-      else if(buf->length != 0) {
-        elua_push_buf(L, context, &output_started, buf, out, conf);
+      else if(ctx->buf->length != 0) {
+        elua_push_buf(L, context, &output_started, ctx);
       }
       break; 
     }
@@ -175,35 +193,33 @@ int elua_parse_file(lua_State *L, FILE *f, cstr *buf, cstr *out, elua_conf_t *co
     if(context & CTX_TEXT) {
       if(prev_c == '<' && c == '%') {
         log_parse("Switch: TEXT -> EVAL <%%");
-        cstr_popc(buf); // remove '<'
-        log_parse("Push: TEXT: (%lu) '%s'", buf->length, buf->ptr);
-        elua_push_buf(L, context, &output_started, buf, out, conf);
+        cstr_popc(ctx->buf); // remove '<'
+        log_parse("Push: TEXT: (%lu) '%s'", ctx->buf->length, ctx->buf->ptr);
+        elua_push_buf(L, context, &output_started, ctx);
         context = CTX_EVAL;
       }
       else {
         if(c == '"' || c == '\n') { // Escape " and \n in text
-          cstr_appendc(buf, '\\');
+          cstr_appendc(ctx->buf, '\\');
         }
-        cstr_appendc(buf, c);
+        cstr_appendc(ctx->buf, c);
       }
     }
     // In eval context?
     else if(context & CTX_EVAL) {
       if(prev_c == '%' && c == '>') {
         log_parse("Switch: EVAL -> TEXT %%>");
-        cstr_popc(buf); // remove '%'
-        //#ifdef DEBUG
+        cstr_popc(ctx->buf); // remove '%'
+#ifdef DEBUG
           if(context & CTX_COMMENT) {
-            log_parse("Push: EVAL Comment: (%lu) '%s'", buf->length, buf->ptr);
+            log_parse("Push: EVAL Comment: (%lu) '%s'", ctx->buf->length, ctx->buf->ptr);
           } else if(context & CTX_PRINT) {
-            log_parse("Push: EVAL print: (%lu) '%s'", buf->length, buf->ptr);
+            log_parse("Push: EVAL print: (%lu) '%s'", ctx->buf->length, ctx->buf->ptr);
           } else {
-            log_parse("Push: EVAL: (%lu) '%s'", buf->length, buf->ptr);
+            log_parse("Push: EVAL: (%lu) '%s'", ctx->buf->length, ctx->buf->ptr);
           }
-        //#endif
-        
-        if((status = elua_push_buf(L, context, &output_started, buf, out, conf))) break;
-        
+#endif
+        if((status = elua_push_buf(L, context, &output_started, ctx))) break;
         context = CTX_TEXT;
       }
       else if(prev_prev_c == '<' && prev_c == '%') {
@@ -219,7 +235,7 @@ int elua_parse_file(lua_State *L, FILE *f, cstr *buf, cstr *out, elua_conf_t *co
         //else { log_parse(filename, line, column, "EVAL == EVAL"); }
       }
       else {
-        cstr_appendc(buf, c);
+        cstr_appendc(ctx->buf, c);
       }
       //else { log_parse(filename, line, column, "EVAL == EVAL %c %c", prev_prev_c, prev_c); }
     }
@@ -236,13 +252,45 @@ int elua_parse_file(lua_State *L, FILE *f, cstr *buf, cstr *out, elua_conf_t *co
     prev_c = c;
   }
   
-  // Reset buffer
-  cstr_reset(buf);
-  
   return status;
 }
 
 
-int lua_load_cstr(lua_State *L, cstr *buf, const char *filename) {
+// LUA addition
+int lua_load_cstr(lua_State *L, cstr_t *buf, const char *filename) {
   return lua_load(L, elua_load_cstr_reader, (void *)buf, filename);
+}
+
+
+int elua_loadfile(lua_State *L, const char *fn, elua_context_t *ctx) {
+  FILE *fp;
+  int status;
+  char *a_fn;
+  
+  a_fn = NULL;
+  
+  // Open file for reading
+  if((fp = fopen(fn, "r")) == NULL) {
+    lua_pushfstring(L, "Failed to open %s for reading: [%d] %s", fn, errno, strerror(errno));
+    fclose(fp);
+    return LUA_ERRFILE;
+  }
+  
+  // Parse & Load
+  if( (status = elua_parse_file(L, fp, ctx)) == 0 ) {
+    // Filename with @-prefix
+    size_t fn_size = strlen(fn);
+    a_fn = (char *)malloc(fn_size+2);
+    a_fn[0] = '@';
+    memcpy(a_fn+1, fn, fn_size);
+    a_fn[fn_size+1] = 0;
+    
+    // Evaluate into the LUA stack
+    status = lua_load_cstr(L, ctx->out, a_fn);
+    
+    free(a_fn);
+  }
+  
+  fclose(fp);
+  return status;
 }

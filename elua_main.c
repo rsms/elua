@@ -13,24 +13,19 @@
 int main (int argc, char const *argv[]) {
   
   lua_State   *L;
-  elua_conf_t conf;
-  cstr        buf;
-  cstr        out;
-  int         error;
+  elua_context_t elua_ctx;
+  int         status;
   const char  *filename;
-  char        *filename2;
-  size_t      filename_size;
   const char  *stdin_filename;
   FILE        *fp;
   
-  conf            = elua_conf_defaults();
-  fp              = stdin;
-  buf             = cstr_new(4096);
-  out             = cstr_new(4096);
-  L               = lua_open();
+  status = 0;
+  fp = stdin;
+  L = lua_open();
+  stdin_filename = "<stdin>";
+  filename = stdin_filename;
+  elua_init_context(&elua_ctx);
   luaL_openlibs(L);
-  stdin_filename  = "<stdin>";
-  filename        = stdin_filename;
   
   // Filename from args?
   if(argc > 1) {
@@ -54,50 +49,24 @@ int main (int argc, char const *argv[]) {
     }
   }
   
-  // Filename with @-prefix
-  filename_size = strlen(filename);
-  filename2 = (char *)malloc(filename_size+2);
-  filename2[0] = '@';
-  memcpy(filename2+1, filename, filename_size);
-  filename2[filename_size+1] = 0;
+  // TODO: restore stdin-support
   
-  // Open file
-  if(filename != stdin_filename) {
-    fp = fopen(filename, "r");
-    if(fp == NULL) {
-      log_error("Failed to open file '%s' for reading. (Reason: %s)", filename, strerror(errno));
-      return 1;
-    }
-  }
-  
-  // Parse & Load
-  if( (error = elua_parse_file(L, fp, &buf, &out, &conf)) ) {
+  // Load
+  if((status = elua_loadfile(L, filename, &elua_ctx))) {
     fprintf(stderr, "Load error: %s\n", lua_tostring(L, -1));
-		lua_pop(L, 1); /* remove the error-msg and the function copy from the stack */
-  }
-  else {
-    // Evaluate into the LUA stack
-    if( (error = lua_load_cstr(L, &out, filename2)) ) {
-      fprintf(stderr, "Syntax error: %s\n", lua_tostring(L, -1));
-		  lua_pop(L, 1); /* remove the error-msg and the function copy from the stack */
-    }
-    else {
-      // Run
-      if( (error = lua_pcall(L, 0, LUA_MULTRET, 0)) ) {
-        const char *errmsg = lua_tostring(L, -1);
-        // TODO: Print source only for the rows where the error occured, like python does.
-        fprintf(stderr, "Runtime error: %s\n%s\n", errmsg, out.ptr);
-  			lua_pop(L, 1); /* remove the error-msg and the function copy from the stack */
-      }
+	  lua_pop(L, 1); /* remove the error-msg and the function copy from the stack */
+	}
+  else { // Run
+    if( (status = lua_pcall(L, 0, LUA_MULTRET, 0)) ) {
+      // TODO: Print source only for the rows where the error occured, like python does.
+      fprintf(stderr, "Runtime error: %s\n%s\n", lua_tostring(L, -1), elua_ctx.out->ptr);
+			lua_pop(L, 1);
     }
   }
   
-  // Close down
-  fclose(fp);
-  cstr_free(&buf);
-  cstr_free(&out);
+  // Clean-up
+  elua_free_context(&elua_ctx);
   lua_close(L);
-  free(filename2);
   
-  return error;
+  return status;
 }
