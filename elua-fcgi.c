@@ -12,6 +12,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <libgen.h>
 
 #include "version.h"
 #include "macros.h"
@@ -305,16 +306,22 @@ static int get_script(lua_State *L, const char *fn) {
 	return 0;
 }
 
-static void print_env(FCGX_Stream *out, char *label, char **envp) {
+/*static void print_env(FCGX_Stream *out, char *label, char **envp) {
     FCGX_FPrintF(out, "%s:<br>\n<pre>\n", label);
     for( ; *envp != NULL; envp++) {
         FCGX_FPrintF(out, "%s\n", *envp);
     }
     FCGX_FPrintF(out, "</pre><p>\n");
-}
+}*/
 
 static int response_print(lua_State *L) {
 	FCGX_PutS(luaL_checkstring(L, 1), request.out);
+	return 0;
+}
+
+static int response_include(lua_State *L) {
+  const char *filename = luaL_checkstring(L, 1);
+  FCGX_FPrintF(request.out, " include(\"%s\") ", filename);
 	return 0;
 }
 
@@ -358,6 +365,7 @@ static int on_runtime_error(lua_State *L) {
 int main (int argc, char const *argv[]) {
   int status;
   lua_State   *L;
+  char *filename;
   
   // Init
   status = 0;
@@ -375,11 +383,17 @@ int main (int argc, char const *argv[]) {
   lua_pushcfunction(L, response_print);                       /* (sp += 1) */
   lua_setfield(L, LUA_GLOBALSINDEX, "print"); /* -1 is the env we want to set(sp -= 1) */
   
+  // Include function
+  lua_pushcfunction(L, response_include);
+  lua_setfield(L, LUA_GLOBALSINDEX, "include");
+  
   // Process requests
   while (FCGX_Accept(&request.in, &request.out, &request.err, &request.env) >= 0) {
+    
 		assert(lua_gettop(L) == 0);
+    filename = FCGX_GetParam("SCRIPT_FILENAME", request.env);
 		
-		if (get_script(L, FCGX_GetParam("SCRIPT_FILENAME", request.env))) {
+		if(get_script(L, filename)) {
 			printf("Status: 404\r\n\r\n404 Not Found");
 			assert(lua_gettop(L) == 0);
 			continue;
@@ -419,6 +433,11 @@ int main (int argc, char const *argv[]) {
     
     // XXX temporary
     FCGX_FPrintF(request.out, "Content-type: text/html\r\n\r\n");
+    
+    // Change working directory
+    if(chdir(dirname(filename)) != 0) {
+      log_error("Failed to chdir to '%s'", dirname(filename));
+    }
     
     // Execute script
     lua_pushcfunction(L, on_runtime_error); // Push error handler

@@ -39,7 +39,9 @@ items = {
       <li><b><%= k %></b> = <%=v%></li>
     <% end %>
     </ul>
-  </body>
+    <hr/>
+    <% include("foo.elua") %>
+    <hr/>
     <%
     
     function a() b() end
@@ -54,4 +56,5 @@ items = {
     can be
     multiline
   %>
+  </body>
 </html>
