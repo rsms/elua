@@ -39,22 +39,10 @@ items = {
       <li><b><%= k %></b> = <%=v%></li>
     <% end %>
     </ul>
-    <hr/>
-    <% include("foo.elua") %>
-    <hr/>
-    <%
-    
-    function a() b() end
-    function b() c() end
-    function c() d() end
-    function d() error("Scheisse!") end
-    a()
-    
-    %>
-  <%#
+  </body>  
+  <%# 
     Comments
     can be
     multiline
   %>
-  </body>
 </html>
